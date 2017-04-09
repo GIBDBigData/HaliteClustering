@@ -149,7 +149,7 @@ class stCellId {
          * @param cell The stCellId to be compared.
          * @return 0 if equal, <0 if this < cell, >0  if this > cell.
          */
-        int operator== (const stCellId &cell) {  
+        int operator== (const stCellId &cell) const {  
             return this->index == cell.index;     
         }//end operator ==
 

@@ -116,9 +116,10 @@ namespace Halite {
      * @param hardClustering Choose between hard (1) and soft (0) clustering.
      *
      */
-    HaliteClustering(PointSource<D>& data, bool hardClustering, uint64_t cache_size = 2*1024*1024*1024,
-		      NormalizationMode NormalizationMode = NormalizationMode::Independent,
-		      D pThreshold = 1e-10, int H = 4, DBTYPE dbType = DB_HASH);
+    HaliteClustering(PointSource<D>& data, bool hardClustering,
+		     const std::string& tmpdir=".",
+		     NormalizationMode NormalizationMode = NormalizationMode::Independent,
+		     D pThreshold = 1e-10, int H = 4);
 
     /**
      * Disposes the allocated memory.

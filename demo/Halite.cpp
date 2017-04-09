@@ -86,7 +86,6 @@ using namespace Halite;
 
 // global variables
 clock_t startTime;
-DBTYPE dbType = DB_HASH; //DB_HASH or DB_BTREE
 
 /**
  * Initiates the measurement of run time.
@@ -114,8 +113,8 @@ int main(int argc, char **argv) {
 	initClock(); // initiates the meassurement of run time
 	
 	// first validations
-	if (argc != 8) {
-	  printf("Usage: Halite <hardClustering> <pThreshold> <H> <cache_points> <cache_mb> <infile> <outfile>\n");
+	if (argc != 7) {
+	  printf("Usage: Halite <hardClustering> <pThreshold> <H> <cache_points> <infile> <outfile>\n");
 		return 1; //error
 	}//end if
 	
@@ -130,15 +129,10 @@ int main(int argc, char **argv) {
 		return 1;
 	}//end if
 
-	long cachesize=atol(argv[5]);
-	uint64_t cache_size=cachesize*1024*1024;
-	if(cachesize < 1) {
-	  printf("Please give at least one megabyte of cache.\n");
-	  return 1;
-	}
+
 	// opens/creates the used files
 	FILE  *result;
-	result=fopen(argv[7], "w");
+	result=fopen(argv[6], "w");
 	if (!result) {
 		printf("Halite could not create the result file.\n");
 		return 1; //error
@@ -146,7 +140,7 @@ int main(int argc, char **argv) {
 
 	PointSource<Dbl>*  db;
 	try {
-	  db=new TextFilePointSource<Dbl>(argv[6]);
+	  db=new TextFilePointSource<Dbl>(argv[5]);
 	} catch(std::exception& e) {
 	  std::cout<<e.what()<<"\n";
 		printf("'Halite could not open database file.\n");
@@ -170,7 +164,7 @@ int main(int argc, char **argv) {
 	}
 
 	// creates an object of the class HaliteClustering
-	HaliteClustering<Dbl> *sCluster = new HaliteClustering<Dbl>(*datasource, argv[1], cache_size, NormalizationMode::Independent, atof(argv[2]), atoi(argv[3]), dbType);		
+	HaliteClustering<Dbl> *sCluster = new HaliteClustering<Dbl>(*datasource, argv[1], ".", NormalizationMode::Independent, atof(argv[2]), atoi(argv[3]));		
 	
 	printf("The tree was built.\n");
 	printElapsed(); // prints the elapsed time

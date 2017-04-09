@@ -122,14 +122,18 @@ class stCell {
       }
       std::cout<<"\n";
   }
- public:
 
+  bool operator==(const stCell& b) const {
+    return usedCell ==b.usedCell && sumOfPoints == b.sumOfPoints && id == b.id && P == b.P;
+  }
 
+  
   char usedCell;     
   int sumOfPoints;
   stCellId id;
   std::vector<size_t> P;
 };
+
 
 #endif //__STCELL_H
 

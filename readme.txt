@@ -57,11 +57,11 @@ Example: results\result12d.dat
 compiling Halite:
 
 First, you must install the required libraries:
-   - Oracle Berkeley DB: "http://www.oracle.com/technetwork/database/berkeleydb/overview/index.html"
+   - Lightning Memory Mapped DB: "http://symas.com/mdb/"
    - OpenCV: "http://opencv.willowgarage.com/"
    - Boost: "htpp://boost.org" (filesystem, disjoint_set, format)
 
-Then, compile the code using any standard c++ compiler using make.
+Then, compile the code using any standard c++11 compiler using make.
 
 *******************************************************************
 
@@ -76,6 +76,5 @@ Obs.:
       - hardClustering = 0 means that the algorithm will do soft-clustering (one point can belong to more than one cluster).
       - the default value for initialLevel is 1.
       - dim specifies the dimension of the input data.  The demo provided has dimension 12 data
-      - distinct forms of memory management are possible by changing the memoryMode parameter. "memory==0" means that both the dataset and the tree will be put in main memory. "memory==1" means that only the tree will be put in main memory. "memory==2" means that only the dataset will be put in main memory. "memory==3" means that neither the database nor the tree will be put in main memory.
 
 Example: make demo (Linux or Mac OS), runExample.bat (Windows).

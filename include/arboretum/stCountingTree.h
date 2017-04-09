@@ -4,67 +4,53 @@
 #define __STCOUNTINGTREE_H
 
 #include "stCell.h"
-#include <db_cxx.h>
+#include "lmdbcxx/lmdb++.h"
 #include <string>
 #include <boost/format.hpp>
 #include <boost/filesystem.hpp>
 
 #include "Normalization.h"
 namespace Halite {
-  
+
   template<typename D>
   class stCountingTree {
   public:
-    stCountingTree(int H, DBTYPE dbType, uint64_t cache_size, int DIM) {
+    stCountingTree(int H, const std::string& tmpdir, int DIM) {
       //empty tree
       this->H = H;
       sumOfPoints = 0;
 
       P.resize(DIM,0);
 
-      env=std::unique_ptr<DbEnv>(new DbEnv(0));
-
-    
-      u_int32_t cacheSizeG, cacheSizeB;
-      cacheSizeG = cache_size / (1024*1024*1024);
-      cacheSizeB = cache_size - (1024*1024*1024)*(uint64_t)cacheSizeG;
-      if(env->set_cachesize(cacheSizeG, cacheSizeB, 1)) {
-	std::cerr << "Error setting cache size.\n";
-      }
-      //  env->set_tmp_dir(".");
+      lmdb_env=lmdb::env::create();
       
-      if(env->open(NULL, DB_CREATE | DB_INIT_MPOOL | DB_PRIVATE, 0)) {
-	std::cerr<< "Error opening db environment.\n";
-      }
-      for(int i=0; i<H-1; i++) {
-	levels.push_back(std::unique_ptr<Db>(new Db(env.get(),0)));
-      }
-    
+      //500 GiB
+      lmdb_env.set_mapsize(500*1024*1024*1024L);
+      lmdb_env.set_max_dbs(H-1);
+      
+      lmdb_env.open(tmpdir.c_str(), MDB_NOSYNC | MDB_WRITEMAP | MDB_NOLOCK);
+      lmdb_txn = lmdb::txn::begin(lmdb_env);
+
+       
       //create/open one dataset per tree level
       for (int i=0; i<H-1; i++) {
 	//create dbName
 	std::string dbName=str(boost::format("level_%1%.db") % i);
-
-	boost::filesystem::remove(dbName);
+	//boost::filesystem::remove(dbName);
 	
+
 	//create and open dataset
-	levels[i]->set_flags(0); //no duplicates neither special configurations
-	if(levels[i]->open(NULL, dbName.c_str(), NULL, dbType, DB_CREATE, 0)) {
-	  std::cerr<<"Error opening db.\n";
-	}
+	lmdb_levels.push_back(lmdb::dbi::open(lmdb_txn, dbName.c_str(),  MDB_CREATE));
+
       }
     }
     ~stCountingTree() {
-      env->close(0);
-      //close and remove one dataset per tree level
-      for (size_t i=0; i<H-1; i++) {
-	//do not need to close, since env->close(0) closed it already without flushing
-	//levels[i]->close(0); 
- 
-	std::string dbName=str(boost::format("level_%1%.db") % i);
+      lmdb_txn.abort();
+      
+      /*      for (size_t i=0; i<H-1; i++) {
+  	std::string dbName=str(boost::format("level_%1%.db") % i);
 	boost::filesystem::remove(dbName);
-      }
-  
+	}*/
 
     }
 
@@ -99,8 +85,12 @@ namespace Halite {
       return !out;
     }
 
-    Db *getDb(size_t level) {
-      return (level<H-1)?levels[level].get():NULL;
+    lmdb::dbi* getLMDB(size_t level) {
+      return (level<H-1)?&lmdb_levels[level]:NULL;
+    }
+
+    lmdb::txn* getLMDBtxn() {
+      return &lmdb_txn;
     }
  
     int getSumOfPoints() {
@@ -124,25 +114,19 @@ namespace Halite {
       id.getIndex(&fullId[level*nPos]);
 
       //search the cell in current level
-      Dbt searchKey(fullId.data(),(level+1)*nPos), searchData;
-      std::vector<unsigned char> cellSerialized (stCell::size(P.size()));
-      searchData.set_data(cellSerialized.data());
-      searchData.set_ulen(stCell::size(P.size())); //Dynamically finds the size of an stCell with dimension P.size()
-      searchData.set_flags(DB_DBT_USERMEM);
-      char found = (levels[level]->get(NULL, &searchKey, &searchData, 0) != DB_NOTFOUND);
-      if (found) {
-	*cell = stCell::deserialize(cellSerialized.data());
+      lmdb::val value;
+      bool lmdb_found = lmdb::dbi_get(lmdb_txn, lmdb_levels[level],
+				      lmdb::val(fullId.data(), (level+1)*nPos),
+				      value);
+  
+      if (lmdb_found) {
+	*cell=stCell::deserialize(value.data<unsigned char>());
 	cell->id = id;
       }
 
-      return found;
+      return lmdb_found;
     }
 
-    void dbSync() {
-      for (size_t i=0; i<H-1; i++) {
-	levels[i]->sync(0); //flushes any cached information to disk
-      }
-    }
     void commitCell(std::vector<stCell>& parents, stCell *cell, size_t level) {
       const size_t nPos = (P.size() + 7) / 8;
       std::vector<unsigned char> fullId((level+1)*nPos, 0);
@@ -154,30 +138,28 @@ namespace Halite {
       cell->getId()->getIndex(&fullId[level*nPos]);
     
       // insert/update the dataset
-      Dbt key(fullId.data(),(level+1)*nPos);
       unsigned char* const serialized = cell->serialize();
-      Dbt data(serialized,stCell::size(P.size())); //Dynamically finds the size of an stCell with dimension P.size()
-      levels[level]->put(NULL, &key, &data, 0);
 
+      lmdb::dbi_put(lmdb_txn, lmdb_levels[level],
+		    lmdb::val(fullId.data(), (level+1)*nPos),
+		    lmdb::val(serialized, stCell::size(P.size())));
       delete[] serialized;
     }
     void findParents(unsigned char *fullId, std::vector<stCell>& parentsVector, int level){
       const size_t nPos = (P.size() + 7) / 8;
-      Dbt searchKey, searchData;
-      searchKey.set_data(fullId);
-      searchData.set_ulen(stCell::size(P.size())); //Dynamically finds the size of an stCell with dimension P.size()
-      searchData.set_flags(DB_DBT_USERMEM);
-      stCellId id(P.size());
+      
       for (int l=0; l<level; l++) {
 	//search the parent in level l
-	std::vector<unsigned char> serialized(stCell::size(P.size()));
-	searchKey.set_size((l+1)*nPos);
-	searchData.set_data(serialized.data());
-	levels[l]->get(NULL, &searchKey, &searchData, 0); //search
-	parentsVector[l] =stCell::deserialize(serialized.data());
-      
-	id.setIndex(fullId+(l*nPos));
-	parentsVector[l].setId(&id); //copy the id
+	lmdb::val key(fullId, (l+1)*nPos), value;
+	
+	bool lmdb_found=lmdb::dbi_get(lmdb_txn, lmdb_levels[l],
+				     key, value);
+	if(!lmdb_found) {
+	  std::cerr<<"Error: NOT FOUND!\n";
+	}
+	parentsVector[l] = stCell::deserialize(value.data<unsigned char>());
+	parentsVector[l].id.setIndex(fullId+(l*nPos));
+
       }
     }
 
@@ -216,14 +198,14 @@ namespace Halite {
 	cellId.getIndex(&fullId[level*nPos]);
 
 	//searchs the cell in current level
-	Dbt searchKey(fullId.data(),(level+1)*nPos), searchData;
-	unsigned char* serialized = new unsigned char[stCell::size(P.size())];
-	searchData.set_data(serialized);
-	searchData.set_ulen(stCell::size(P.size()));//Dynamically finds the size of an stCell with dimension P.size()
-	searchData.set_flags(DB_DBT_USERMEM);
-	if (!levels[level]->get(NULL, &searchKey, &searchData, 0))
-	  cellAndParents[level] = stCell::deserialize(serialized);
-	delete[] serialized;
+	lmdb::val value;
+	bool lmdb_found=lmdb::dbi_get(lmdb_txn, lmdb_levels[level],
+				      lmdb::val(fullId.data(), (level+1)*nPos),
+				      value);
+
+	if (lmdb_found) {
+	  cellAndParents[level]  = stCell::deserialize(value.data<unsigned char>());
+	}
 
 	//counts the new point
 	cellAndParents[level].insertPoint();
@@ -234,14 +216,12 @@ namespace Halite {
 
 
 	// insert/update the dataset
-	Dbt key(fullId.data(),(level+1)*nPos);
-	//stCell tmp= stCell(P.size());
-	//cellAndParents[level].copy(&tmp,P.size());
-	//tmp.reset();
-	serialized = cellAndParents[level].serialize();
-	Dbt data(serialized, stCell::size(P.size()));
+	unsigned char* serialized = cellAndParents[level].serialize();
 
-	levels[level]->put(NULL, &key, &data, 0);
+	lmdb::dbi_put(lmdb_txn, lmdb_levels[level],
+		      lmdb::val(fullId.data(), (level+1)*nPos),
+		      lmdb::val(serialized, stCell::size(P.size())));
+
 	delete[] serialized;
       }
     }
@@ -249,8 +229,11 @@ namespace Halite {
     std::vector<int> P;
     size_t sumOfPoints;
     size_t H;
-    std::vector<std::unique_ptr<Db>> levels;
-    std::unique_ptr<DbEnv> env;
+
+    std::vector<lmdb::dbi> lmdb_levels;
+    
+    lmdb::env lmdb_env=NULL;
+    lmdb::txn lmdb_txn=NULL;
     std::shared_ptr<Halite::Normalization<D>> normalization;
   };
 
